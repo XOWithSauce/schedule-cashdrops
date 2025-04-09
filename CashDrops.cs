@@ -6,15 +6,14 @@ using ScheduleOne.ObjectScripts.Cash;
 using ScheduleOne.DevUtilities;
 using ScheduleOne.ItemFramework;
 using HarmonyLib;
-using System.Reflection;
 using ScheduleOne.NPCs;
 using ScheduleOne.Employees;
+using ScheduleOne.Persistence;
 
 [assembly: MelonInfo(typeof(CashDrops.CashDrops), CashDrops.BuildInfo.Name, CashDrops.BuildInfo.Version, CashDrops.BuildInfo.Author, CashDrops.BuildInfo.DownloadLink)]
 [assembly: MelonColor()]
 [assembly: MelonOptionalDependencies("FishNet.Runtime")]
 [assembly: MelonGame("TVGS", "Schedule I")]
-[assembly: HarmonyDontPatchAll]
 
 namespace CashDrops
 {
@@ -24,33 +23,38 @@ namespace CashDrops
         public const string Description = "NPC Cash Drops";
         public const string Author = "XOWithSauce";
         public const string Company = null;
-        public const string Version = "1.0";
+        public const string Version = "1.1";
         public const string DownloadLink = null;
     }
 
     public class CashDrops : MelonMod
     {
-        private static HarmonyLib.Harmony harmonyInstance;
         public static List<object> coros = new();
-        public static GameObject basePrefab;
-
-        #region Unity
-        public override void OnApplicationStart()
+        public static GameObject Visuals_Over100 = null;
+        public static GameObject Visuals_Under100 = null;
+        public static GameObject Bill = null;
+        public static GameObject Note = null;
+        private bool registered = false;
+        private void OnLoadCompleteCb()
         {
-            harmonyInstance = new HarmonyLib.Harmony(BuildInfo.Name);
-            harmonyInstance.PatchAll(Assembly.GetExecutingAssembly());
-            MelonLogger.Msg("NPC Cash Drops enabled");
-
+            if (registered) return;
+            coros.Add(MelonCoroutines.Start(this.Setup()));
+            registered = true;
         }
+        #region Unity
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
         {
             if (buildIndex == 1)
             {
                 // MelonLogger.Msg("Start State");
-                coros.Add(MelonCoroutines.Start(this.Setup()));
+                if (LoadManager.Instance != null && !registered)
+                {
+                    LoadManager.Instance.onLoadComplete.AddListener(OnLoadCompleteCb);
+                }
             }
             else
             {
+                registered = false;
                 // MelonLogger.Msg("Clear State");
                 foreach (object coro in coros)
                 {
@@ -70,20 +74,48 @@ namespace CashDrops
                 return true;
             }
         }
-
+        #endregion
         private static IEnumerator PreNPCKnockOut(NPCHealth __instance)
         {
-            yield return new WaitForSeconds(2f);
+            yield return new WaitForSeconds(1f);
             NPC npc = __instance.GetComponent<NPC>();
             if (npc != null && !(npc is Employee))
             {
-                Vector3 topNpc = new(__instance.transform.position.x, __instance.transform.position.y + 2f, __instance.transform.position.z);
-                GameObject go = GameObject.Instantiate(CashDrops.basePrefab, topNpc, Quaternion.identity);
+                Vector3 topNpc = new(__instance.transform.position.x, __instance.transform.position.y + 1f, __instance.transform.position.z);
+                int roll = UnityEngine.Random.Range(1, 8);
+                switch (roll)
+                {
+                    case 1:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Note, 1, 3, 1));
+                        break;
 
-                if (!go.activeInHierarchy)
-                    go.SetActive(true);
+                    case 2:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Note, 4, 8, 1));
+                        break;
 
-                MelonCoroutines.Start(CashDespawnHandler(go));
+                    case 3:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Note, 10, 20, 1));
+                        break;
+
+                    case 4:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Bill, 1, 3, 2));
+                        break;
+
+                    case 5:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Bill, 3, 6, 2));
+                        break;
+
+                    case 6:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Visuals_Under100, 1, 4, 3));
+                        break;
+
+                    case 7:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Visuals_Over100, 1, 3, 4));
+                        break;
+
+                    default:
+                        break;
+                }
             } else
             {
                 //MelonLogger.Msg("EmployeeNPC");
@@ -101,11 +133,51 @@ namespace CashDrops
 
             yield return null;
         }
-        #endregion
+        private static IEnumerator CashPickupDelay(GameObject go, int value)
+        {
+            yield return new WaitForSeconds(2f);
+            CashPickup pickupComp = go.GetComponent<CashPickup>();
+            if (pickupComp != null)
+                pickupComp.SetupPickup(value);
+            //MelonLogger.Msg("Added collision handler");
+
+        }
+        private static IEnumerator CashSpawnRoutine(Vector3 pos, GameObject baseObj, int lowerAmnt, int upperAmnt, int value)
+        {
+            GameObject bunchBase = new GameObject("CashBunchBase");
+            for (int i = 0; i < UnityEngine.Random.Range(lowerAmnt, upperAmnt); i++)
+            {
+                //MelonLogger.Msg("Spawning Cash");
+                yield return new WaitForSeconds(0.05f);
+                GameObject go = GameObject.Instantiate(baseObj, pos, Quaternion.identity, bunchBase.transform);
+                if (!go.activeInHierarchy)
+                    go.SetActive(true);
+                Rigidbody rb = go.GetComponent<Rigidbody>();
+
+                if (rb != null)
+                {
+                    Vector3 force = Vector3.up * 6f;
+                    rb.AddForce(force, ForceMode.Impulse);
+                    yield return new WaitForSeconds(0.1f);
+                    if (UnityEngine.Random.Range(0, 100) >= 50)
+                        force = Vector3.right;
+                    else
+                        force = Vector3.left;
+
+                    rb.AddForce(force, ForceMode.Impulse);
+
+                    float torqueX = UnityEngine.Random.Range(-5f, 5f);
+                    float torqueZ = UnityEngine.Random.Range(-5f, 5f);
+                    rb.AddTorque(new Vector3(torqueX, 0f, torqueZ), ForceMode.Impulse);
+                    MelonCoroutines.Start(CashPickupDelay(go, value));
+                }
+            }
+            MelonCoroutines.Start(CashDespawnHandler(bunchBase));
+        }
 
         public class CashCollisionHandler : MonoBehaviour
         {
-
+            public int value;
             private void OnTriggerEnter(Collider collision)
             {
                 GameObject other = collision.gameObject;
@@ -131,23 +203,53 @@ namespace CashDrops
                 {
                     return;
                 }
-
+                
                 float amountToAdd;
-                if (UnityEngine.Random.Range(0, 100) > 80)
-                    amountToAdd = Mathf.Round(UnityEngine.Random.Range(200f, 1000f));
-                else
-                    amountToAdd = Mathf.Round(UnityEngine.Random.Range(25f, 200f));
+                switch (value)
+                {
+                    case 1:
+                        if (UnityEngine.Random.Range(0, 100) > 80)
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(10f, 40f));
+                        else
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(1f, 20f));
+                        break;
+
+                    case 2:
+                        if (UnityEngine.Random.Range(0, 100) > 80)
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(30f, 60f));
+                        else
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(10f, 40f));
+                        break;
+
+                    case 3:
+                        if (UnityEngine.Random.Range(0, 100) > 80)
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(60f, 100f));
+                        else
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(30f, 60f));
+                        break;
+
+                    case 4:
+                        if (UnityEngine.Random.Range(0, 100) > 80)
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(100f, 200f));
+                        else
+                            amountToAdd = Mathf.Round(UnityEngine.Random.Range(60f, 100f));
+                        break;
+
+                    default:
+                        amountToAdd = 1f;
+                        break;
+                }
 
                 cashInstance.ChangeBalance(amountToAdd);
 
                 Destroy(this.transform.parent.gameObject);
             }
         }
-
         public class CashPickup : MonoBehaviour
         {
-            public void SetupPickup()
+            public void SetupPickup(int value)
             {
+                //MelonLogger.Msg("SetupPickup");
                 GameObject triggerChild = new GameObject("CashPickupTrigger");
                 triggerChild.transform.SetParent(this.transform);
                 triggerChild.transform.localPosition = Vector3.zero;
@@ -156,48 +258,80 @@ namespace CashDrops
                 trigger.size = new Vector3(0.5f, 0.5f, 0.5f);
                 trigger.isTrigger = true;
 
-                triggerChild.AddComponent<CashCollisionHandler>();
+                CashCollisionHandler cch = triggerChild.AddComponent<CashCollisionHandler>();
+                cch.value = value;
             }
         }
-
+        private bool IsAssignedObjects()
+        {
+            return CashDrops.Note != null && CashDrops.Bill != null && CashDrops.Visuals_Under100 != null && CashDrops.Visuals_Over100 != null;
+        }
         private IEnumerator Setup()
         {
+            if (IsAssignedObjects()) { yield break; }
+
             yield return new WaitForSeconds(10f);
             CashStackVisuals[] csv = UnityEngine.Object.FindObjectsOfType<CashStackVisuals>(true);
             if (csv.Length > 0)
             {
                 foreach (CashStackVisuals inst in csv)
                 {
-                    yield return new WaitForSeconds(1f);
-                    if (inst.Visuals_Over100)
+                    yield return new WaitForSeconds(0.3f);
+                    if (CashDrops.Visuals_Over100 == null && inst.Visuals_Over100)
                     {
-                        CashDrops.basePrefab = inst.Visuals_Over100;
-                        break;
+                        CashDrops.Visuals_Over100 = GameObject.Instantiate(inst.Visuals_Over100.gameObject, Vector3.zero, Quaternion.identity, null);
+                        CashDrops.Visuals_Over100.SetActive(false);
+                        PrepareObject(CashDrops.Visuals_Over100);
+                        //MelonLogger.Msg("Over100 assigned");
+
                     }
+                    if (CashDrops.Visuals_Under100 == null && inst.Visuals_Under100)
+                    {
+                        CashDrops.Visuals_Under100 = GameObject.Instantiate(inst.Visuals_Under100.gameObject, Vector3.zero, Quaternion.identity, null);
+                        CashDrops.Visuals_Under100.SetActive(false);
+                        PrepareObject(CashDrops.Visuals_Under100);
+                        //MelonLogger.Msg("Under100 assigned");
+
+                    }
+                    if (CashDrops.Bill == null && inst.Bills.FirstOrDefault())
+                    {
+                        CashDrops.Bill = GameObject.Instantiate(inst.Bills.FirstOrDefault().gameObject, Vector3.zero, Quaternion.identity, null);
+                        CashDrops.Bill.SetActive(false);
+                        PrepareObject(CashDrops.Bill);
+                        //MelonLogger.Msg("Bill assigned");
+                    }
+                    if (CashDrops.Note == null && inst.Notes.FirstOrDefault())
+                    {
+                        CashDrops.Note = GameObject.Instantiate(inst.Notes.FirstOrDefault().gameObject, Vector3.zero, Quaternion.identity, null);
+                        CashDrops.Note.SetActive(false);
+                        PrepareObject(CashDrops.Note);
+                        //MelonLogger.Msg("Note assigned");
+                    }
+
+                    if (IsAssignedObjects()) { yield break; }
                 }
             }
 
-            if (!CashDrops.basePrefab) { yield return null; }
-
-            CashPickup cashPickupComponent = CashDrops.basePrefab.AddComponent<CashPickup>();
-            cashPickupComponent.SetupPickup();
-            BoxCollider box;
-            Rigidbody rb;
-            if (!CashDrops.basePrefab.TryGetComponent<BoxCollider>(out box))
-            {
-                box = CashDrops.basePrefab.AddComponent<BoxCollider>();
-                box.size = new Vector3(0.3f, 0.3f, 0.3f);
-            }
-            if (!CashDrops.basePrefab.TryGetComponent<Rigidbody>(out rb))
-            {
-                rb = CashDrops.basePrefab.AddComponent<Rigidbody>();
-                rb.useGravity = true;
-            }
 
             yield return null;
         }
+        private void PrepareObject(GameObject go)
+        {
+            CashPickup cashPickupComponent = go.AddComponent<CashPickup>();
+            BoxCollider box;
+            Rigidbody rb;
+            if (!go.TryGetComponent<BoxCollider>(out box))
+            {
+                box = go.AddComponent<BoxCollider>();
+                box.size = new Vector3(0.2f, 0.2f, 0.2f);
+            }
+            if (!go.TryGetComponent<Rigidbody>(out rb))
+            {
+                rb = go.AddComponent<Rigidbody>();
+                rb.useGravity = true;
+                rb.excludeLayers = 6;
+            }
+        }
         #endregion
-
-        
     }
 }
