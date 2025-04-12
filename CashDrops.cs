@@ -1,14 +1,12 @@
 using MelonLoader;
 using System.Collections;
-using ScheduleOne.PlayerScripts;
 using UnityEngine;
 using ScheduleOne.ObjectScripts.Cash;
-using ScheduleOne.DevUtilities;
-using ScheduleOne.ItemFramework;
 using HarmonyLib;
 using ScheduleOne.NPCs;
 using ScheduleOne.Employees;
 using ScheduleOne.Persistence;
+using ScheduleOne.Money;
 
 [assembly: MelonInfo(typeof(CashDrops.CashDrops), CashDrops.BuildInfo.Name, CashDrops.BuildInfo.Version, CashDrops.BuildInfo.Author, CashDrops.BuildInfo.DownloadLink)]
 [assembly: MelonColor()]
@@ -23,7 +21,7 @@ namespace CashDrops
         public const string Description = "NPC Cash Drops";
         public const string Author = "XOWithSauce";
         public const string Company = null;
-        public const string Version = "1.1";
+        public const string Version = "1.2";
         public const string DownloadLink = null;
     }
 
@@ -74,17 +72,63 @@ namespace CashDrops
                 return true;
             }
         }
+        [HarmonyPatch(typeof(NPCHealth), "Die")]
+        public static class NPC_Die_Patch
+        {
+            public static bool Prefix(NPCHealth __instance)
+            {
+                coros.Add(MelonCoroutines.Start(PreNPCKnockOut(__instance)));
+                return true;
+            }
+        }
         #endregion
         private static IEnumerator PreNPCKnockOut(NPCHealth __instance)
         {
             yield return new WaitForSeconds(1f);
             NPC npc = __instance.GetComponent<NPC>();
+
+            int npcStatus = 0;
+            switch (npc.Region)
+            {
+                case ScheduleOne.Map.EMapRegion.Northtown:
+                    npcStatus = 0;
+                    break;
+
+                case ScheduleOne.Map.EMapRegion.Westville:
+                    npcStatus = 1;
+                    break;
+
+                case ScheduleOne.Map.EMapRegion.Downtown:
+                    npcStatus = 2;
+                    break;
+
+                case ScheduleOne.Map.EMapRegion.Docks:
+                    npcStatus = 3;
+                    break;
+
+                case ScheduleOne.Map.EMapRegion.Suburbia:
+                    npcStatus = 4;
+                    break;
+
+                case ScheduleOne.Map.EMapRegion.Uptown:
+                    npcStatus = 5;
+                    break;
+
+                default:
+                    break;
+            }
+
             if (npc != null && !(npc is Employee))
             {
                 Vector3 topNpc = new(__instance.transform.position.x, __instance.transform.position.y + 1f, __instance.transform.position.z);
-                int roll = UnityEngine.Random.Range(1, 8);
+                int leastMaxRoll = 3 + npcStatus;
+                int roll = UnityEngine.Random.Range(npcStatus, leastMaxRoll);
                 switch (roll)
                 {
+                    case 0:
+                        MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Note, 1, 2, 1));
+                        break;
+
                     case 1:
                         MelonCoroutines.Start(CashSpawnRoutine(topNpc, CashDrops.Note, 1, 3, 1));
                         break;
@@ -185,25 +229,6 @@ namespace CashDrops
 
                 if (otherLayer != 6) return;
 
-                Player player = other.GetComponentInParent<Player>();
-                if (player == null)
-                {
-                    return;
-                }
-
-                var inventory = PlayerSingleton<PlayerInventory>.Instance;
-                if (inventory == null)
-                {
-                    return;
-                }
-
-                CashInstance cashInstance = inventory.cashInstance;
-
-                if (cashInstance == null)
-                {
-                    return;
-                }
-                
                 float amountToAdd;
                 switch (value)
                 {
@@ -240,8 +265,7 @@ namespace CashDrops
                         break;
                 }
 
-                cashInstance.ChangeBalance(amountToAdd);
-
+                MoneyManager.Instance.ChangeCashBalance(amountToAdd, true, false);
                 Destroy(this.transform.parent.gameObject);
             }
         }
